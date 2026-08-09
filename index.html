@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Tablero de Deuda — Clientes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --navy:#0f2744;--navy-mid:#1a3a5c;--navy-light:#234872;
+  --blue:#2563eb;--blue-light:#3b82f6;
+  --sky:#e0eeff;--sky-dark:#bfdbfe;
+  --white:#ffffff;--gray-50:#f8fafc;--gray-100:#f1f5f9;
+  --gray-200:#e2e8f0;--gray-400:#94a3b8;--gray-600:#475569;--gray-800:#1e293b;
+  --red:#dc2626;--green:#16a34a;--amber:#d97706;
+  --font-sans:'Inter',system-ui,sans-serif;
+  --font-mono:'JetBrains Mono','Fira Mono',monospace;
+  --radius:8px;--radius-lg:14px;
+  --shadow:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.06);
+  --shadow-md:0 4px 12px rgba(0,0,0,.10),0 2px 6px rgba(0,0,0,.06);
+}
+html{font-size:15px}
+body{font-family:var(--font-sans);background:var(--gray-50);color:var(--gray-800);line-height:1.5;-webkit-font-smoothing:antialiased}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:var(--gray-100)}
+::-webkit-scrollbar-thumb{background:var(--gray-400);border-radius:3px}
+
+/* Layout */
+.app{display:flex;flex-direction:column;min-height:100vh}
+.app-main{flex:1;max-width:1400px;margin:0 auto;width:100%;padding:0 24px 48px}
+
+/* Header */
+.app-header{background:var(--navy);border-bottom:3px solid var(--blue);position:sticky;top:0;z-index:100;box-shadow:0 2px 12px rgba(0,0,0,.25)}
+.header-inner{max-width:1400px;margin:0 auto;padding:14px 24px;display:flex;align-items:center;justify-content:space-between}
+.header-brand{display:flex;align-items:center;gap:12px}
+.header-logo{width:40px;height:40px;background:var(--blue);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px}
+.header-title{font-size:1.15rem;font-weight:700;color:var(--white);letter-spacing:-.02em}
+.header-sub{font-size:.75rem;color:var(--sky-dark);margin-top:1px}
+.header-actions{display:flex;gap:10px}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:var(--radius);font-family:var(--font-sans);font-size:.85rem;font-weight:600;cursor:pointer;border:none;transition:all .15s}
+.btn-primary{background:var(--blue);color:var(--white)}
+.btn-primary:hover{background:var(--blue-light)}
+.btn-ghost{background:rgba(255,255,255,.1);color:var(--white);border:1px solid rgba(255,255,255,.2)}
+.btn-ghost:hover{background:rgba(255,255,255,.18)}
+.btn-process{background:var(--navy);color:var(--white);padding:14px 36px;font-size:1rem;border-radius:10px;box-shadow:0 4px 14px rgba(37,99,235,.3);transition:all .2s}
+.btn-process:hover:not(:disabled){background:var(--navy-mid);transform:translateY(-1px);box-shadow:0 6px 20px rgba(37,99,235,.35)}
+.btn-process:disabled{background:var(--gray-400);cursor:not-allowed;box-shadow:none}
+.btn-toggle{background:none;border:none;cursor:pointer;font-family:var(--font-sans);font-size:.875rem;font-weight:600;color:var(--navy);display:flex;align-items:center;gap:8px;padding:0}
+.btn-toggle:hover{color:var(--blue)}
+
+/* Upload */
+.upload-section{padding-top:40px}
+.section-header{margin-bottom:28px}
+.section-header h2{font-size:1.6rem;font-weight:700;color:var(--navy);letter-spacing:-.03em}
+.section-header p{color:var(--gray-600);margin-top:6px;font-size:.9rem}
+.dropzones-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:28px}
+@media(max-width:900px){.dropzones-grid{grid-template-columns:repeat(2,1fr)}}
+.dropzone{border:2px dashed var(--gray-200);border-radius:var(--radius-lg);background:var(--white);padding:28px 16px 24px;cursor:pointer;transition:all .2s;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;box-shadow:var(--shadow)}
+.dropzone:hover{border-color:var(--blue-light);background:var(--sky);transform:translateY(-2px);box-shadow:var(--shadow-md)}
+.dropzone.drag{border-color:var(--blue);background:var(--sky);transform:translateY(-2px)}
+.dropzone.has-file{border-color:#16a34a;border-style:solid;background:#f0fdf4}
+.dz-icon{font-size:2rem;margin-bottom:4px}
+.dz-label{font-size:.85rem;font-weight:700;color:var(--navy);line-height:1.3}
+.dz-hint{font-size:.75rem;color:var(--gray-400);font-family:var(--font-mono)}
+.dz-file{font-size:.75rem;color:var(--green);font-weight:600;word-break:break-all}
+
+/* Params */
+.params-toggle-bar{margin-bottom:12px;display:flex;align-items:center;gap:12px}
+.params-badge{font-family:var(--font-mono);font-size:.75rem;background:var(--sky);color:var(--navy);padding:2px 8px;border-radius:20px;font-weight:600}
+.params-panel{background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-lg);padding:20px 24px;margin-bottom:28px;box-shadow:var(--shadow)}
+.params-title{font-size:.85rem;font-weight:700;color:var(--navy);margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.params-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px}
+.param-group{display:flex;flex-direction:column;gap:6px}
+.param-group>span{font-size:.78rem;font-weight:600;color:var(--gray-600);text-transform:uppercase;letter-spacing:.04em}
+.param-group input{border:1px solid var(--gray-200);border-radius:var(--radius);padding:8px 10px;font-family:var(--font-mono);font-size:.88rem;color:var(--navy);background:var(--gray-50);width:100%;transition:border-color .15s}
+.param-group input:focus{outline:none;border-color:var(--blue);background:var(--white)}
+.input-prefix{display:flex;align-items:center;border:1px solid var(--gray-200);border-radius:var(--radius);background:var(--gray-50);overflow:hidden;transition:border-color .15s}
+.input-prefix:focus-within{border-color:var(--blue);background:var(--white)}
+.input-prefix>.pfx{padding:8px 10px;font-size:.85rem;color:var(--gray-400);font-weight:600;background:var(--gray-100);border-right:1px solid var(--gray-200);white-space:nowrap}
+.input-prefix input{border:none!important;border-radius:0!important;background:transparent!important;flex:1;padding:8px 10px;font-family:var(--font-mono);font-size:.88rem;color:var(--navy)}
+.input-prefix input:focus{outline:none}
+.params-preview{display:flex;gap:16px;margin-top:14px;padding-top:14px;border-top:1px solid var(--gray-100);flex-wrap:wrap}
+.params-preview span{font-family:var(--font-mono);font-size:.8rem;color:var(--gray-600);background:var(--sky);padding:3px 10px;border-radius:20px;font-weight:500}
+
+/* Process */
+.process-row{display:flex;flex-direction:column;align-items:center;gap:14px}
+.error-msg{background:#fef2f2;border:1px solid #fca5a5;border-radius:var(--radius);color:var(--red);padding:10px 16px;font-size:.875rem;width:100%}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:var(--white);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Results */
+.results-section{padding-top:32px}
+.summary-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:28px}
+@media(max-width:900px){.summary-strip{grid-template-columns:repeat(2,1fr)}}
+.summary-card{background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-lg);padding:20px 22px;box-shadow:var(--shadow);border-top:3px solid var(--gray-200)}
+.summary-card.green{border-top-color:var(--green)}
+.summary-card.navy{border-top-color:var(--navy);background:var(--navy)}
+.sc-label{font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--gray-600);margin-bottom:8px}
+.summary-card.navy .sc-label{color:var(--sky-dark)}
+.sc-value{font-family:var(--font-mono);font-size:1.3rem;font-weight:700;color:var(--navy);letter-spacing:-.02em}
+.summary-card.navy .sc-value{color:var(--white)}
+.sc-sub{font-size:.75rem;color:var(--gray-400);margin-top:4px}
+.summary-card.navy .sc-sub{color:var(--sky-dark);opacity:.8}
+
+/* Tabs */
+.tabs-bar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.tabs{display:flex;background:var(--gray-100);border-radius:var(--radius);padding:3px}
+.tab{background:none;border:none;cursor:pointer;font-family:var(--font-sans);font-size:.85rem;font-weight:600;color:var(--gray-600);padding:8px 18px;border-radius:6px;transition:all .15s;display:flex;align-items:center;gap:8px}
+.tab.active{background:var(--white);color:var(--navy);box-shadow:var(--shadow)}
+.tab-badge{font-size:.7rem;background:var(--sky);color:var(--blue);padding:1px 7px;border-radius:20px;font-weight:700}
+.tab.active .tab-badge{background:var(--blue);color:var(--white)}
+.search-wrap{position:relative;display:flex;align-items:center}
+.search-icon{position:absolute;left:10px;font-size:.85rem;pointer-events:none}
+.search-input{border:1px solid var(--gray-200);border-radius:var(--radius);padding:8px 32px;font-family:var(--font-sans);font-size:.85rem;width:220px;background:var(--white);transition:border-color .15s}
+.search-input:focus{outline:none;border-color:var(--blue)}
+.search-clear{position:absolute;right:8px;background:none;border:none;cursor:pointer;font-size:.75rem;color:var(--gray-400);padding:2px}
+.params-mini-bar{display:flex;gap:16px;background:var(--navy);border-radius:var(--radius) var(--radius) 0 0;padding:8px 16px;margin-top:12px;flex-wrap:wrap}
+.params-mini-bar span{font-family:var(--font-mono);font-size:.75rem;color:var(--sky-dark);font-weight:500}
+
+/* Table */
+.table-wrap{overflow-x:auto;border-radius:0 0 var(--radius-lg) var(--radius-lg);box-shadow:var(--shadow-md);border:1px solid var(--gray-200);border-top:none}
+.data-table{width:100%;border-collapse:collapse;font-size:.82rem;background:var(--white)}
+.data-table thead th{background:var(--navy-light);color:var(--white);font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:11px 14px;white-space:nowrap}
+.data-table thead th.col-deuda{background:var(--navy-mid)}
+.data-table thead th.col-total{background:#0a1f3d}
+.col-cliente{text-align:left;min-width:260px}
+.col-num{text-align:right;min-width:140px;white-space:nowrap}
+tbody .col-deuda{background:rgba(224,238,255,.4)}
+tbody .col-total{background:rgba(224,238,255,.25)}
+.data-table tbody td{padding:9px 14px;border-bottom:1px solid var(--gray-100);font-family:var(--font-mono);font-size:.81rem}
+.td-cliente{font-family:var(--font-sans)!important;font-size:.83rem!important;color:var(--gray-800);font-weight:500}
+.row-alt{background:var(--gray-50)}
+.data-table tbody tr:hover{background:var(--sky)!important}
+.cell-red{color:var(--red);font-weight:600}
+.cell-green{color:var(--green);font-weight:600}
+.cell-zero{color:var(--gray-400)}
+.cell-deuda{color:var(--navy);font-weight:600}
+.totals-row{background:var(--navy)!important;position:sticky;bottom:0}
+.totals-row td{color:var(--white)!important;font-family:var(--font-mono)!important;font-weight:700!important;font-size:.82rem!important;padding:12px 14px!important;border-bottom:none!important;white-space:nowrap}
+.total-red{color:#fca5a5!important}
+.total-green{color:#86efac!important}
+.empty-table{text-align:center;padding:48px;color:var(--gray-400);font-size:.9rem;background:var(--white);border:1px solid var(--gray-200);border-top:none;border-radius:0 0 var(--radius-lg) var(--radius-lg)}
+
+/* Legend */
+.legend-bar{display:flex;gap:20px;margin-top:12px;padding:10px 16px;background:var(--gray-100);border-radius:var(--radius);flex-wrap:wrap}
+.leg{font-size:.75rem;color:var(--gray-600)}
+.leg.red::before{content:'● ';color:var(--red)}
+.leg.green::before{content:'● ';color:var(--green)}
+
+/* Footer */
+.app-footer{text-align:center;padding:16px;font-size:.75rem;color:var(--gray-400);border-top:1px solid var(--gray-200);background:var(--white)}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+// ═══════════════════════════════════════════════════════════
+// ENGINE
+// ═══════════════════════════════════════════════════════════
+const DEDUP_MAP = {
+  'Agrotecnología y Servicios S.A.':'AGROTECNOLOGIA Y SERVICIOS SA',
+  'AGROTECNOLOGIA Y SERVICIOS SA':'AGROTECNOLOGIA Y SERVICIOS SA',
+  'BAILLERES COMERCIAL S.A':'BAILLERES COMERCIAL SA',
+  'DS Hnos. SRL':'DS HNOS SRL',
+  'ESTANCIAS SAN AGUSTIN SOCIEDAD EN COMANDITA POR AC':'ESTANCIAS SAN AGUSTIN SCA',
+  'GANADERA LOS MOLLES S.A':'GANADERA LOS MOLLES S.A.',
+  'Gesagro S.A.':'GESAGRO SA','GESAGRO SA':'GESAGRO SA',
+  'HESAR HNOS S.A':'HESAR HNOS S.A.',
+  'Maiocco Cereales S.A.':'MAIOCCO CEREALES SA',
+  'M.C.M SOCIEDAD DE RESPONSABILIDAD LIMITADA':'M.C.M SRL',
+  'Plantaflor S.A.':'PLANTAFLOR SA',
+  'TOSQUITA CEREALES SOCIEDAD ANONIMA':'TOSQUITA CEREALES SA',
+  'ZANOY AGRO & SERVICIOS SOCIEDAD ANONIMA':'ZANOY AGRO & SERVICIOS SA',
+  'CEREALISTA MOLDES S A':'CEREALISTA MOLDES SA',
+  'ALDO RUFFINO AGROPECUARIA S. A.':'ALDO RUFFINO AGROPECUARIA SA',
+  'LOGRANDO AMIGOS S R L':'LOGRANDO AMIGOS SRL',
+  'AGROTECNICA COMERCIAL S.R.L. (AGROTECNICA COMERCIA':'AGROTECNICA COMERCIAL S.R.L.',
+  'TERRA VERDE AGRO INSUMOS SA SA':'TERRA VERDE AGRO INSUMOS SA',
+  'Terra Verde Agro Insumos SA':'TERRA VERDE AGRO INSUMOS SA',
+};
+
+function canonical(name){ const n=(name||'').toString().trim(); return DEDUP_MAP[n]||n; }
+
+function parseDate(val){
+  if(!val) return null;
+  if(val instanceof Date) return val;
+  if(typeof val==='number'){
+    const d=new Date((val-25569)*86400*1000);
+    return new Date(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate());
+  }
+  const s=val.toString().trim();
+  const m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if(m) return new Date(parseInt(m[3]),parseInt(m[2])-1,parseInt(m[1]));
+  const d=new Date(s); return isNaN(d)?null:d;
+}
+
+function inPeriod(dateVal,start,end){
+  const d=parseDate(dateVal); if(!d) return false;
+  const t=d.getTime();
+  const s=start?start.getTime():-Infinity;
+  const e=end?end.getTime():Infinity;
+  return t>=s&&t<=e;
+}
+
+function num(v){ const n=parseFloat((v||'').toString().replace(',','.')); return isNaN(n)?0:n; }
+
+function findCol(headers,candidates){
+  for(const cand of candidates){
+    const re=new RegExp(cand,'i');
+    const idx=headers.findIndex(h=>re.test((h||'').toString().trim()));
+    if(idx>=0) return idx;
+  }
+  return -1;
+}
+
+function sheetToRows(wb){
+  const ws=wb.Sheets[wb.SheetNames[0]];
+  return XLSX.utils.sheet_to_json(ws,{header:1,defval:null});
+}
+
+function processCta(wb,start,end){
+  const rows=sheetToRows(wb); if(!rows.length) return {};
+  const h=rows[0].map(x=>(x||'').toString());
+  const cC=findCol(h,['Nombre del Productor','Productor','Cliente','Nombre']);
+  const cF=findCol(h,['Fecha Vencimiento','Vencimiento','Fecha']);
+  const cS=findCol(h,['SALDO_AFECTADOS_DOLARES','Saldo.*D','Saldo']);
+  const acc={};
+  for(let i=1;i<rows.length;i++){
+    const r=rows[i]; if(!r||!r[cC]) continue;
+    if(!inPeriod(r[cF],start,end)) continue;
+    const c=canonical(r[cC]); acc[c]=(acc[c]||0)+num(r[cS]);
+  }
+  return acc;
+}
+
+function processNegocios(wb,start,end){
+  const rows=sheetToRows(wb); if(!rows.length) return {};
+  const h=rows[0].map(x=>(x||'').toString());
+  const cC=findCol(h,['Nombre del Productor','Productor','Cliente']);
+  const cF=findCol(h,['FECHA_VENCIMIENTO_ORIGEN','Vencimiento.*Origen','Vencimiento']);
+  const cI=findCol(h,['IMPORTE','Importe','Monto']);
+  const cR=findCol(h,['DESCIPCION_RUBRO','DESCRIPCION_RUBRO','Rubro','Descripcion']);
+  const acc={};
+  for(let i=1;i<rows.length;i++){
+    const r=rows[i]; if(!r||!r[cC]) continue;
+    if(!inPeriod(r[cF],start,end)) continue;
+    const rubro=(r[cR]||'').toString();
+    const iva=rubro.includes('4')&&rubro.toLowerCase().includes('fert')?0.105:0.21;
+    const c=canonical(r[cC]); acc[c]=(acc[c]||0)+num(r[cI])*(1+iva);
+  }
+  return acc;
+}
+
+function processCheques(wb,start,end,tc){
+  const rows=sheetToRows(wb); if(!rows.length) return {};
+  const h=rows[0].map(x=>(x||'').toString());
+  const cC=findCol(h,['NOMBRE','Nombre','Cliente']);
+  const cF=findCol(h,['Fecha Pago','FechaPago','Fecha']);
+  const cM=findCol(h,['Medio Pago','MedioPago','Medio','Tipo']);
+  const cI=findCol(h,['IMPORTE_CHEQUE','Importe.*Cheque','Importe','Monto']);
+  const acc={};
+  for(let i=1;i<rows.length;i++){
+    const r=rows[i]; if(!r||!r[cC]) continue;
+    if((r[cM]||'').toString().trim().toUpperCase()!=='T') continue;
+    if(!inPeriod(r[cF],start,end)) continue;
+    const c=canonical(r[cC]); acc[c]=(acc[c]||0)+num(r[cI])/tc;
+  }
+  return acc;
+}
+
+function processCanjes(wb,start,end,tc,precios){
+  const rows=sheetToRows(wb); if(!rows.length) return {};
+  const h=rows[0].map(x=>(x||'').toString());
+  const cC=findCol(h,['Vendedor','Cliente','Nombre']);
+  const cF=findCol(h,['FechaEntregaDesde','Fecha.*Entrega','Fecha']);
+  const cP=findCol(h,['Precio']);
+  const cPr=findCol(h,['Producto','Grano','Cereal']);
+  const cE=findCol(h,['Tns Entregadas','TnsEntregadas','Entregadas']);
+  const cL=findCol(h,['Tns Liquidadas','TnsLiquidadas','Liquidadas']);
+  const cPe=findCol(h,['Tns Pendiente','TnsPendiente','Pendiente']);
+  const acc={};
+  for(let i=1;i<rows.length;i++){
+    const r=rows[i]; if(!r||!r[cC]) continue;
+    if(!inPeriod(r[cF],start,end)) continue;
+    const prod=(r[cPr]||'').toString().trim();
+    let pUSD=num(r[cP]);
+    if(!pUSD||pUSD===0){
+      if(/soja/i.test(prod)) pUSD=precios.soja/tc;
+      else if(/ma[íi]z/i.test(prod)) pUSD=precios.maiz/tc;
+      else if(/trigo/i.test(prod)) pUSD=precios.trigo/tc;
+      else pUSD=precios.soja/tc;
+    } else if(pUSD>10000){ pUSD=pUSD/tc; }
+    const tn=Math.max(0,(num(r[cE])-num(r[cL]))+num(r[cPe]));
+    const c=canonical(r[cC]); acc[c]=(acc[c]||0)+pUSD*tn*1.105;
+  }
+  return acc;
+}
+
+function buildTable(ctaM,negM,chqM,canjeM){
+  const all=new Set([...Object.keys(ctaM),...Object.keys(negM),...Object.keys(chqM),...Object.keys(canjeM)]);
+  const rows=[];
+  for(const c of all){
+    const cta=ctaM[c]||0,neg=negM[c]||0,chq=chqM[c]||0,canje=canjeM[c]||0;
+    if(Math.abs(cta)+Math.abs(neg)+Math.abs(chq)+Math.abs(canje)<0.01) continue;
+    rows.push({cliente:c,cta,neg,deuda:cta+neg,chq:-chq,canje:-canje,total:cta+neg-chq-canje});
+  }
+  return rows.sort((a,b)=>b.total-a.total);
+}
+
+function loadWB(file){
+  return new Promise((res,rej)=>{
+    const reader=new FileReader();
+    reader.onload=e=>{try{res(XLSX.read(e.target.result,{type:'array',cellDates:false}))}catch(err){rej(err)}};
+    reader.onerror=rej;
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function processFiles(files,params){
+  const {tc,precios,fechaTablero}=params;
+  const ref=fechaTablero?new Date(fechaTablero):new Date();
+  const agEnd=new Date(ref.getFullYear(),ref.getMonth()+1,0);
+  const novS=new Date(2026,10,1),novE=new Date(2026,10,30);
+  return Promise.all([loadWB(files.ctaCte),loadWB(files.cheques),loadWB(files.negocios),loadWB(files.canjes)])
+    .then(([wCta,wChq,wNeg,wCanje])=>({
+      rowsAgosto:buildTable(processCta(wCta,null,agEnd),processNegocios(wNeg,null,agEnd),processCheques(wChq,null,agEnd,tc),processCanjes(wCanje,null,agEnd,tc,precios)),
+      rowsNov:buildTable(processCta(wCta,novS,novE),processNegocios(wNeg,novS,novE),processCheques(wChq,novS,novE,tc),processCanjes(wCanje,novS,novE,tc,precios)),
+    }));
+}
+
+function sumCol(rows,key){ return rows.reduce((s,r)=>s+(r[key]||0),0); }
+
+function exportToExcel(rowsA,rowsN,params){
+  const wb=XLSX.utils.book_new();
+  const hdr=['CLIENTE','CTA CTE USD','PTE FACTURAR USD','DEUDA TOTAL USD','CHEQUES USD','CANJES USD','TOTAL GENERAL USD'];
+  function mkSheet(rows,label){
+    const data=[hdr];
+    rows.forEach(r=>data.push([r.cliente,r.cta||null,r.neg||null,r.deuda||null,r.chq||null,r.canje||null,r.total||null]));
+    const tot=k=>rows.reduce((s,r)=>s+(r[k]||0),0);
+    data.push(['TOTAL',tot('cta'),tot('neg'),tot('deuda'),tot('chq'),tot('canje'),tot('total')]);
+    const ws=XLSX.utils.aoa_to_sheet(data);
+    ws['!cols']=[{wch:45},{wch:16},{wch:18},{wch:16},{wch:16},{wch:16},{wch:16}];
+    XLSX.utils.book_append_sheet(wb,ws,label);
+  }
+  mkSheet(rowsA,'Vencido y Agosto');
+  mkSheet(rowsN,'Noviembre 2026');
+  const pData=[['Parámetro','Valor'],['Fecha',params.fechaTablero],['TC',params.tc],
+    ['Soja ARS/tn',params.precios.soja],['Maíz ARS/tn',params.precios.maiz],['Trigo ARS/tn',params.precios.trigo],
+    ['Soja USD/tn',(params.precios.soja/params.tc).toFixed(2)],['Maíz USD/tn',(params.precios.maiz/params.tc).toFixed(2)],
+    ['Trigo USD/tn',(params.precios.trigo/params.tc).toFixed(2)]];
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(pData),'Parámetros');
+  const out=XLSX.write(wb,{bookType:'xlsx',type:'array'});
+  const url=URL.createObjectURL(new Blob([out],{type:'application/octet-stream'}));
+  Object.assign(document.createElement('a'),{href:url,download:`Tablero_Deuda_${(params.fechaTablero||'').replace(/\//g,'-')}.xlsx`}).click();
+  URL.revokeObjectURL(url);
+}
+
+// ═══════════════════════════════════════════════════════════
+// REACT COMPONENTS
+// ═══════════════════════════════════════════════════════════
+const {useState,useRef,useCallback,createElement:h}=React;
+
+function fmtUSD(v,signed=false){
+  if(Math.abs(v)<0.005) return '—';
+  const abs=Math.abs(v).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  return (signed&&v<0?'-':'')+'$'+abs;
+}
+
+function CellNum({value,mode}){
+  if(Math.abs(value)<0.005) return h('span',{className:'cell-zero'},'—');
+  if(mode==='highlight') return h('span',{className:value>0?'cell-red':value<0?'cell-green':'cell-zero'},fmtUSD(value,value<0));
+  if(mode==='deuda') return h('span',{className:'cell-deuda'},fmtUSD(value));
+  return h('span',{},fmtUSD(value,value<0));
+}
+
+function DropZone({label,hint,file,onFile,icon}){
+  const [drag,setDrag]=useState(false);
+  const ref=useRef();
+  const handle=f=>{if(f&&(f.name.endsWith('.xlsx')||f.name.endsWith('.xls'))) onFile(f);};
+  return h('div',{
+    className:`dropzone${drag?' drag':''}${file?' has-file':''}`,
+    onClick:()=>ref.current.click(),
+    onDragOver:e=>{e.preventDefault();setDrag(true)},
+    onDragLeave:()=>setDrag(false),
+    onDrop:e=>{e.preventDefault();setDrag(false);handle(e.dataTransfer.files[0])},
+  },
+    h('input',{ref,type:'file',accept:'.xlsx,.xls',style:{display:'none'},onChange:e=>handle(e.target.files[0])}),
+    h('div',{className:'dz-icon'},icon),
+    h('div',{className:'dz-label'},label),
+    file?h('div',{className:'dz-file'},'✓ '+file.name):h('div',{className:'dz-hint'},hint)
+  );
+}
+
+function SummaryCard({label,value,sub,accent}){
+  return h('div',{className:`summary-card${accent?' '+accent:''}`},
+    h('div',{className:'sc-label'},label),
+    h('div',{className:'sc-value'},fmtUSD(value)),
+    sub&&h('div',{className:'sc-sub'},sub)
+  );
+}
+
+function ParamsPanel({params,onChange}){
+  const upd=(k,v)=>onChange({...params,...k==='tc'?{tc:v}:{precios:{...params.precios,[k]:v}}});
+  return h('div',{className:'params-panel'},
+    h('div',{className:'params-title'},h('span',{},'⚙'),' Parámetros del tablero'),
+    h('div',{className:'params-grid'},
+      h('label',{className:'param-group'},
+        h('span',{},'Fecha del tablero'),
+        h('input',{type:'date',value:params.fechaTablero,onChange:e=>onChange({...params,fechaTablero:e.target.value})})
+      ),
+      h('label',{className:'param-group'},
+        h('span',{},'TC Dólar Divisa Vendedor Nación'),
+        h('div',{className:'input-prefix'},
+          h('span',{className:'pfx'},'$'),
+          h('input',{type:'number',step:'0.01',value:params.tc,onChange:e=>upd('tc',parseFloat(e.target.value)||0)})
+        )
+      ),
+      ['soja','maiz','trigo'].map(g=>h('label',{className:'param-group',key:g},
+        h('span',{},{soja:'Soja BCR (ARS/tn)',maiz:'Maíz BCR (ARS/tn)',trigo:'Trigo BCR (ARS/tn)'}[g]),
+        h('div',{className:'input-prefix'},
+          h('span',{className:'pfx'},'$'),
+          h('input',{type:'number',step:'100',value:params.precios[g],onChange:e=>upd(g,parseFloat(e.target.value)||0)})
+        )
+      ))
+    ),
+    params.tc>0&&h('div',{className:'params-preview'},
+      ['soja','maiz','trigo'].map(g=>h('span',{key:g},{soja:'🌱 Soja',maiz:'🌽 Maíz',trigo:'🌾 Trigo'}[g]+': USD '+(params.precios[g]/params.tc).toFixed(2)+'/tn'))
+    )
+  );
+}
+
+function DataTable({rows,search}){
+  const filtered=search?rows.filter(r=>r.cliente.toLowerCase().includes(search.toLowerCase())):rows;
+  if(!filtered.length) return h('div',{className:'empty-table'},search?`Sin resultados para "${search}"`:'Sin datos para este período');
+  const tot=k=>filtered.reduce((s,r)=>s+(r[k]||0),0);
+  return h('div',{className:'table-wrap'},
+    h('table',{className:'data-table'},
+      h('thead',{},h('tr',{},
+        h('th',{className:'col-cliente'},'Cliente'),
+        h('th',{className:'col-num'},'Cta Cte USD'),
+        h('th',{className:'col-num'},'Pte de Facturar'),
+        h('th',{className:'col-num col-deuda'},'Deuda Total'),
+        h('th',{className:'col-num'},'Cheques'),
+        h('th',{className:'col-num'},'Cttos Canjes'),
+        h('th',{className:'col-num col-total'},'Total General'),
+      )),
+      h('tbody',{},filtered.map((r,i)=>
+        h('tr',{key:r.cliente,className:i%2===0?'row-alt':''},
+          h('td',{className:'col-cliente td-cliente'},r.cliente),
+          h('td',{className:'col-num'},h(CellNum,{value:r.cta})),
+          h('td',{className:'col-num'},h(CellNum,{value:r.neg})),
+          h('td',{className:'col-num col-deuda'},h(CellNum,{value:r.deuda,mode:'deuda'})),
+          h('td',{className:'col-num'},h(CellNum,{value:r.chq})),
+          h('td',{className:'col-num'},h(CellNum,{value:r.canje})),
+          h('td',{className:'col-num col-total'},h(CellNum,{value:r.total,mode:'highlight'})),
+        )
+      )),
+      h('tfoot',{},h('tr',{className:'totals-row'},
+        h('td',{},'TOTAL ('+filtered.length+' clientes)'),
+        h('td',{className:'col-num'},fmtUSD(tot('cta'))),
+        h('td',{className:'col-num'},fmtUSD(tot('neg'))),
+        h('td',{className:'col-num'},fmtUSD(tot('deuda'))),
+        h('td',{className:'col-num'},fmtUSD(tot('chq'),true)),
+        h('td',{className:'col-num'},fmtUSD(tot('canje'),true)),
+        h('td',{className:`col-num${tot('total')>0?' total-red':' total-green'}`},fmtUSD(tot('total'))),
+      ))
+    )
+  );
+}
+
+function App(){
+  const [files,setFiles]=useState({ctaCte:null,cheques:null,negocios:null,canjes:null});
+  const [params,setParams]=useState({fechaTablero:'2026-08-07',tc:1498.50,precios:{soja:320000,maiz:278700,trigo:230000}});
+  const [result,setResult]=useState(null);
+  const [loading,setLoading]=useState(false);
+  const [error,setError]=useState(null);
+  const [tab,setTab]=useState('agosto');
+  const [search,setSearch]=useState('');
+  const [showParams,setShowParams]=useState(true);
+
+  const allLoaded=Object.values(files).every(Boolean);
+
+  const handleProcess=useCallback(async()=>{
+    if(!allLoaded) return;
+    setLoading(true);setError(null);
+    try{
+      const data=await processFiles(files,params);
+      setResult(data);setShowParams(false);setTab('agosto');setSearch('');
+    }catch(e){setError('Error procesando los archivos: '+e.message);}
+    finally{setLoading(false);}
+  },[files,params,allLoaded]);
+
+  const currentRows=result?(tab==='agosto'?result.rowsAgosto:result.rowsNov):[];
+
+  return h('div',{className:'app'},
+    // Header
+    h('header',{className:'app-header'},
+      h('div',{className:'header-inner'},
+        h('div',{className:'header-brand'},
+          h('div',{className:'header-logo'},'📊'),
+          h('div',{},
+            h('div',{className:'header-title'},'Tablero de Deuda'),
+            h('div',{className:'header-sub'},'Gestión de clientes · Vista integral'),
+          )
+        ),
+        result&&h('div',{className:'header-actions'},
+          h('button',{className:'btn btn-ghost',onClick:()=>{setResult(null);setShowParams(true);}},'← Nueva consulta'),
+          h('button',{className:'btn btn-primary',onClick:()=>exportToExcel(result.rowsAgosto,result.rowsNov,params)},'↓ Exportar Excel'),
+        )
+      )
+    ),
+
+    // Main
+    h('main',{className:'app-main'},
+      !result&&h('section',{className:'upload-section'},
+        h('div',{className:'section-header'},
+          h('h2',{},'Cargá los archivos'),
+          h('p',{},'Arrastrá o hacé clic en cada zona para seleccionar el Excel correspondiente')
+        ),
+        h('div',{className:'dropzones-grid'},
+          h(DropZone,{label:'Cuenta Corriente Clientes',hint:'Cta_cte_clientes.xlsx',file:files.ctaCte,onFile:f=>setFiles(p=>({...p,ctaCte:f})),icon:'📋'}),
+          h(DropZone,{label:'Cheques en Cartera',hint:'Cheques_en_cartera.xlsx',file:files.cheques,onFile:f=>setFiles(p=>({...p,cheques:f})),icon:'🏦'}),
+          h(DropZone,{label:'Negocios Pendientes de Facturar',hint:'Negocios_ptes_de_facturar.xlsx',file:files.negocios,onFile:f=>setFiles(p=>({...p,negocios:f})),icon:'📦'}),
+          h(DropZone,{label:'Contratos Canje / FyO / Acopio',hint:'Reporte_Pos_Contratos.xlsx',file:files.canjes,onFile:f=>setFiles(p=>({...p,canjes:f})),icon:'🌾'}),
+        ),
+        h('div',{className:'params-toggle-bar'},
+          h('button',{className:'btn-toggle',onClick:()=>setShowParams(p=>!p)},
+            showParams?'▲':'▼',' Parámetros del tablero ',
+            h('span',{className:'params-badge'},'TC: $'+params.tc.toLocaleString('es-AR'))
+          )
+        ),
+        showParams&&h(ParamsPanel,{params,onChange:setParams}),
+        h('div',{className:'process-row'},
+          error&&h('div',{className:'error-msg'},error),
+          h('button',{
+            className:'btn btn-process',
+            onClick:handleProcess,
+            disabled:!allLoaded||loading,
+          },
+            loading?h('span',{},h('span',{className:'spinner'}),' Procesando…')
+            :!allLoaded?'Faltan archivos — cargá los 4 Excel'
+            :'▶  Generar tablero'
+          )
+        )
+      ),
+
+      result&&h('section',{className:'results-section'},
+        h('div',{className:'summary-strip'},
+          h(SummaryCard,{label:'Deuda total (Agosto)',value:sumCol(result.rowsAgosto,'deuda'),sub:result.rowsAgosto.length+' clientes'}),
+          h(SummaryCard,{label:'Cheques en cartera',value:Math.abs(sumCol(result.rowsAgosto,'chq')),sub:"Solo tipo T · convertidos a USD",accent:'green'}),
+          h(SummaryCard,{label:'Contratos de canje',value:Math.abs(sumCol(result.rowsAgosto,'canje')),sub:'Con IVA 10,5%',accent:'green'}),
+          h(SummaryCard,{label:'TOTAL GENERAL',value:sumCol(result.rowsAgosto,'total'),sub:'Deuda neta a cobrar',accent:'navy'}),
+        ),
+        h('div',{className:'tabs-bar'},
+          h('div',{className:'tabs'},
+            h('button',{className:'tab'+(tab==='agosto'?' active':''),onClick:()=>{setTab('agosto');setSearch('');}},
+              'Vencido y Agosto',h('span',{className:'tab-badge'},result.rowsAgosto.length)),
+            h('button',{className:'tab'+(tab==='nov'?' active':''),onClick:()=>{setTab('nov');setSearch('');}},
+              'Noviembre 2026',h('span',{className:'tab-badge'},result.rowsNov.length)),
+          ),
+          h('div',{className:'search-wrap'},
+            h('span',{className:'search-icon'},'🔍'),
+            h('input',{type:'text',placeholder:'Buscar cliente…',value:search,onChange:e=>setSearch(e.target.value),className:'search-input'}),
+            search&&h('button',{className:'search-clear',onClick:()=>setSearch('')},'✕'),
+          )
+        ),
+        h('div',{className:'params-mini-bar'},
+          h('span',{},'📅 '+params.fechaTablero),
+          h('span',{},'TC $'+params.tc.toLocaleString('es-AR')),
+          h('span',{},'🌱 Soja USD '+(params.precios.soja/params.tc).toFixed(2)+'/tn'),
+          h('span',{},'🌽 Maíz USD '+(params.precios.maiz/params.tc).toFixed(2)+'/tn'),
+          h('span',{},'🌾 Trigo USD '+(params.precios.trigo/params.tc).toFixed(2)+'/tn'),
+        ),
+        h(DataTable,{rows:currentRows,search}),
+        h('div',{className:'legend-bar'},
+          h('span',{className:'leg red'},'Rojo = deuda a cobrar'),
+          h('span',{className:'leg green'},'Verde = saldo a favor del cliente'),
+          h('span',{className:'leg'},'Cheques: solo tipo "T" · IVA Fertilizantes 10,5% · Agroquímicos 21% · Canjes 10,5%'),
+        )
+      )
+    ),
+
+    h('footer',{className:'app-footer'},
+      '📍 Tablero de Deuda · Procesamiento 100% local · Los archivos no se suben a ningún servidor'
+    )
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(h(App));
+</script>
+</body>
+</html>
