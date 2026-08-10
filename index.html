@@ -1006,7 +1006,7 @@ function App(){
           h('span',{},'🌾 Trigo USD '+(params.precios.trigoUSD||0)+'/tn'),
         ),
         h(DataTable,{
-          search,filter,minDeuda,colVisible,obs,
+          rows:currentRows,search,filter,minDeuda,colVisible,obs,
           onObsChange:(c,v)=>setObs(o=>({...o,[c]:v})),
           onDetail:setDetailRow,sortKey,sortDir,onSort:handleSort
         }),
