@@ -275,8 +275,23 @@ const DEDUP_MAP={
 function canonical(n){const s=(n||'').toString().trim();return DEDUP_MAP[s]||s;}
 
 // ═══ ENGINE ═══
-function processCta(wb,s,e){
-  const rows=sheetToRows(wb);if(!rows.length)return{totals:{},detail:{}};
+// Cada Excel se parsea UNA sola vez a registros normalizados y después se filtra por período.
+// Todo registro lleva _c (cliente canónico), _d (fecha que define el período) y _m (monto USD).
+
+function parseISODate(v){
+  if(!v)return null;
+  const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(v.toString());
+  if(m)return new Date(+m[1],+m[2]-1,+m[3]);   // local, no UTC
+  const d=new Date(v);return isNaN(d)?null:d;
+}
+function monthKey(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
+function inPeriodD(d,s,e){
+  if(!d)return false;const t=d.getTime();
+  return t>=(s?s.getTime():-Infinity)&&t<=(e?e.getTime():Infinity);
+}
+
+function parseCta(wb){
+  const rows=sheetToRows(wb);if(!rows.length)return[];
   const h=rows[0].map(x=>(x||'').toString());
   const cC=findCol(h,['Nombre del Productor','Productor','Cliente','Nombre']);
   const cComp=findCol(h,['Comprobante']);
@@ -284,67 +299,56 @@ function processCta(wb,s,e){
   const cFvto=findCol(h,['Fecha Vencimiento','Vencimiento']);
   const cS=findCol(h,['SALDO_AFECTADOS_DOLARES','Saldo.*D','Saldo']);
   const cTC=findCol(h,['Tipo de Cambio','TipoCambio','TC']);
-  const totals={},detail={};
+  const out=[];
   for(let i=1;i<rows.length;i++){
     const r=rows[i];if(!r||!r[cC])continue;
-    if(!inPeriod(r[cFvto],s,e))continue;
-    const c=canonical(r[cC]);const v=num(r[cS]);
-    totals[c]=(totals[c]||0)+v;
-    if(!detail[c])detail[c]=[];
-    detail[c].push({
+    const saldo=num(r[cS]);
+    out.push({_c:canonical(r[cC]),_d:parseDate(r[cFvto]),_m:saldo,
       comprobante:(cComp>=0?r[cComp]:'')||'',
       fechaComp:cFcomp>=0?r[cFcomp]:null,
       vencimiento:r[cFvto],
       tc:cTC>=0?num(r[cTC]):null,
-      saldo:v
-    });
+      saldo});
   }
-  return{totals,detail};
+  return out;
 }
 
-function processNegocios(wb,s,e){
-  const rows=sheetToRows(wb);if(!rows.length)return{totals:{},detail:{}};
+function parseNegocios(wb){
+  const rows=sheetToRows(wb);if(!rows.length)return[];
   const h=rows[0].map(x=>(x||'').toString());
   const cC=findCol(h,['Nombre del Productor','Productor','Cliente']);
   const cCod=findCol(h,['Código de Comprobante','Codigo.*Comp']);
   const cNro=findCol(h,['Numero de Comprobante','Numero.*Comp','Numero']);
-  const cFecha=findCol(h,['Fecha$','Fecha ']);  // "Fecha" column (not Fecha Vencimiento)
+  const cFecha=findCol(h,['Fecha$','Fecha ']);
   const cDesc=findCol(h,['Descripción$','Descripcion$','Descripción ']);
   const cCant=findCol(h,['Cantidad$','Cantidad ']);
   const cCantPend=findCol(h,['CANTIDAD_PENDIENTE','Cantidad.*Pend']);
   const cI=findCol(h,['IMPORTE','Importe','Monto']);
   const cR=findCol(h,['DESCIPCION_RUBRO','DESCRIPCION_RUBRO','Rubro']);
   const cFvto=findCol(h,['FECHA_VENCIMIENTO_ORIGEN','Vencimiento.*Origen']);
-  const totals={},detail={};
+  const out=[];
   for(let i=1;i<rows.length;i++){
     const r=rows[i];if(!r||!r[cC])continue;
-    if(!inPeriod(r[cFvto],s,e))continue;
     const rubro=(r[cR]||'').toString();
     // "4 - Fertilizante" → IVA 10,5% | "1 - Agroquimico", "99 - Otros" y demás → IVA 21%
     const iva=/fert/i.test(rubro)?0.105:0.21;
     const imp=num(r[cI])*(1+iva);
-    const c=canonical(r[cC]);
     const cod=(cCod>=0?r[cCod]:'')||'';
     const nro=(cNro>=0?r[cNro]:'')||'';
-    const comprobante=cod&&nro?cod+' '+nro:(cod||nro||'—');
-    totals[c]=(totals[c]||0)+imp;
-    if(!detail[c])detail[c]=[];
-    detail[c].push({
-      comprobante,
+    out.push({_c:canonical(r[cC]),_d:parseDate(r[cFvto]),_m:imp,
+      comprobante:cod&&nro?cod+' '+nro:(cod||nro||'—'),
       fecha:cFecha>=0?r[cFecha]:null,
       descripcion:(cDesc>=0?r[cDesc]:'')||'',
       cantidad:cCant>=0?num(r[cCant]):null,
       cantidadPend:cCantPend>=0?num(r[cCantPend]):null,
       vencimiento:r[cFvto],
-      importe:imp,
-      iva:iva*100
-    });
+      importe:imp,iva:iva*100});
   }
-  return{totals,detail};
+  return out;
 }
 
-function processCheques(wb,s,e,tc){
-  const rows=sheetToRows(wb);if(!rows.length)return{totals:{},detail:{}};
+function parseCheques(wb,tc){
+  const rows=sheetToRows(wb);if(!rows.length)return[];
   const h=rows[0].map(x=>(x||'').toString());
   const cC=findCol(h,['NOMBRE','Nombre','Cliente']);
   const cF=findCol(h,['Fecha Pago','FechaPago']);
@@ -352,27 +356,22 @@ function processCheques(wb,s,e,tc){
   const cI=findCol(h,['IMPORTE_CHEQUE','Importe.*Cheque','Importe','Monto']);
   const cNum=findCol(h,['Numero Cheque','NroCheque','Numero','Nro']);
   const cEmision=findCol(h,['Fecha Emision','FechaEmision','Emision']);
-  const totals={},detail={};
+  const out=[];
   for(let i=1;i<rows.length;i++){
     const r=rows[i];if(!r||!r[cC])continue;
-    if((r[cM]||'').toString().trim().toUpperCase()!=='T')continue;
-    if(!inPeriod(r[cF],s,e))continue;
-    const imp=num(r[cI])/tc;const c=canonical(r[cC]);
-    totals[c]=(totals[c]||0)+imp;
-    if(!detail[c])detail[c]=[];
-    detail[c].push({
+    if((r[cM]||'').toString().trim().toUpperCase()!=='T')continue;   // solo Medio Pago = "T"
+    const imp=num(r[cI])/tc;
+    // El período del cheque lo define SIEMPRE su fecha de pago (acreditación)
+    out.push({_c:canonical(r[cC]),_d:parseDate(r[cF]),_m:imp,
       numero:(cNum>=0?r[cNum]:'')||'',
       fechaEmision:cEmision>=0?r[cEmision]:null,
-      fechaPago:r[cF],
-      importeARS:num(r[cI]),
-      importeUSD:imp
-    });
+      fechaPago:r[cF],importeARS:num(r[cI]),importeUSD:imp});
   }
-  return{totals,detail};
+  return out;
 }
 
-function processCanjes(wb,s,e,tc,precios){
-  const rows=sheetToRows(wb);if(!rows.length)return{totals:{},detail:{}};
+function parseCanjes(wb,tc,precios){
+  const rows=sheetToRows(wb);if(!rows.length)return[];
   const h=rows[0].map(x=>(x||'').toString());
   const cC=findCol(h,['Vendedor','Cliente','Nombre']);
   const cF=findCol(h,['FechaEntregaDesde','Fecha.*Entrega','Fecha']);
@@ -381,58 +380,65 @@ function processCanjes(wb,s,e,tc,precios){
   const cL=findCol(h,['Tns Liquidadas','TnsLiquidadas','Liquidadas']);
   const cPe=findCol(h,['Tns Pendiente','TnsPendiente','Pendiente']);
   const cCtto=findCol(h,['Numero Contrato Hijo','Contrato Hijo','Numero.*Contrato','NroCtto','NumCtto','Nro.*Contrato']);
-  const totals={},detail={};
+  const out=[];
   for(let i=1;i<rows.length;i++){
     const r=rows[i];if(!r||!r[cC])continue;
-    if(!inPeriod(r[cF],s,e))continue;
     const prod=(r[cPr]||'').toString().trim();
     let pUSD=num(r[cP]);
     if(!pUSD){
-      // Use USD price directly from precios (already in USD from pizarra)
       if(/soja/i.test(prod))pUSD=precios.sojaUSD;
       else if(/ma[íi]z/i.test(prod))pUSD=precios.maizUSD;
       else if(/trigo/i.test(prod))pUSD=precios.trigoUSD;
       else pUSD=precios.sojaUSD;
-    } else if(pUSD>1000){pUSD=pUSD/tc;}   // > 1.000 ⇒ el precio viene en ARS, se convierte a USD
+    } else if(pUSD>1000){pUSD=pUSD/tc;}   // > 1.000 ⇒ viene en ARS, se convierte a USD
+    pUSD=num(pUSD);
     const tn=Math.max(0,(num(r[cE])-num(r[cL]))+num(r[cPe]));
-    const total=pUSD*tn*1.105;const c=canonical(r[cC]);
-    totals[c]=(totals[c]||0)+total;
-    if(!detail[c])detail[c]=[];
-    detail[c].push({contrato:(cCtto>=0?r[cCtto]:'')||'',producto:prod,fechaEntrega:r[cF],precioUSD:pUSD,tn,total});
-  }
-  return{totals,detail};
-}
-
-function calcDiasVencidos(wb,today){
-  const rows=sheetToRows(wb);if(!rows.length)return{};
-  const h=rows[0].map(x=>(x||'').toString());
-  const cC=findCol(h,['Nombre del Productor','Productor','Cliente','Nombre']);
-  const cF=findCol(h,['Fecha Vencimiento','Vencimiento']);
-  const cS=findCol(h,['SALDO_AFECTADOS_DOLARES','Saldo.*D','Saldo']);
-  // Also get detail of overdue invoices per client
-  const cComp=findCol(h,['Comprobante']);
-  // Devuelve un objeto indexado por cliente: { [cliente]: {dias, saldoVencido, factVencidas:[...]} }
-  const out={};
-  for(let i=1;i<rows.length;i++){
-    const r=rows[i];if(!r||!r[cC])continue;
-    const saldo=num(r[cS]);if(saldo<=0.01)continue;
-    const d=parseDate(r[cF]);if(!d||d>today)continue;
-    const dias=Math.floor((today-d)/(1000*60*60*24));
-    const c=canonical(r[cC]);
-    if(!out[c])out[c]={dias:0,saldoVencido:0,factVencidas:[]};
-    out[c].dias=Math.max(out[c].dias,dias);      // factura más antigua vencida
-    out[c].saldoVencido+=saldo;
-    out[c].factVencidas.push({comprobante:(cComp>=0?r[cComp]:'')||'',vencimiento:r[cF],saldo,dias});
+    const total=pUSD*tn*1.105;
+    out.push({_c:canonical(r[cC]),_d:parseDate(r[cF]),_m:total,
+      contrato:(cCtto>=0?r[cCtto]:'')||'',producto:prod,fechaEntrega:r[cF],precioUSD:pUSD,tn,total});
   }
   return out;
 }
 
-function buildTable(ctaR,negR,chqR,canjeR){
+// Filtra registros por período y ordena el detalle del MÁS VENCIDO / ANTIGUO al más reciente
+function agg(recs,s,e){
+  const totals={},detail={};
+  for(const r of recs){
+    if(!inPeriodD(r._d,s,e))continue;
+    totals[r._c]=(totals[r._c]||0)+r._m;
+    if(!detail[r._c])detail[r._c]=[];
+    detail[r._c].push(r);
+  }
+  for(const k in detail)detail[k].sort((a,b)=>(a._d?a._d.getTime():Infinity)-(b._d?b._d.getTime():Infinity));
+  return{totals,detail};
+}
+
+function calcDiasVencidos(recCta,today){
+  // { [cliente]: {dias, saldoVencido, factVencidas:[...]} } — facturas de la más vencida a la menos
+  const out={};
+  for(const r of recCta){
+    if(r.saldo<=0.01)continue;
+    if(!r._d||r._d>today)continue;
+    const dias=Math.floor((today-r._d)/86400000);
+    if(!out[r._c])out[r._c]={dias:0,saldoVencido:0,factVencidas:[]};
+    out[r._c].dias=Math.max(out[r._c].dias,dias);
+    out[r._c].saldoVencido+=r.saldo;
+    out[r._c].factVencidas.push({comprobante:r.comprobante,vencimiento:r.vencimiento,saldo:r.saldo,dias});
+  }
+  for(const k in out)out[k].factVencidas.sort((a,b)=>b.dias-a.dias);
+  return out;
+}
+
+// conDeuda = clientes que registran deuda en ALGÚN período (cta cte o pte de facturar).
+// Un cliente entra en la pestaña si tiene deuda en ese período O si —teniendo deuda en algún
+// momento— tiene cheques/canjes cuya fecha cae en ese período.
+function buildTable(ctaR,negR,chqR,canjeR,conDeuda){
   const all=new Set([...Object.keys(ctaR.totals),...Object.keys(negR.totals),...Object.keys(chqR.totals),...Object.keys(canjeR.totals)]);
   const rows=[];
   for(const c of all){
     const cta=ctaR.totals[c]||0,neg=negR.totals[c]||0,chq=chqR.totals[c]||0,canje=canjeR.totals[c]||0;
-    if(Math.abs(cta)+Math.abs(neg)<0.01)continue;
+    const tieneDeuda=Math.abs(cta)+Math.abs(neg)>=0.01;
+    if(!tieneDeuda&&!(conDeuda&&conDeuda.has(c)))continue;
     if(Math.abs(cta)+Math.abs(neg)+Math.abs(chq)+Math.abs(canje)<0.01)continue;
     rows.push({cliente:c,cta,neg,deuda:cta+neg,chq:-chq,canje:-canje,total:cta+neg-chq-canje,obs:'',
       detail:{facturas:ctaR.detail[c]||[],negocios:negR.detail[c]||[],cheques:chqR.detail[c]||[],canjes:canjeR.detail[c]||[]}});
@@ -448,34 +454,46 @@ function loadWB(file){
   });
 }
 
-function mkPeriodRows(wCta,wChq,wNeg,wCanje,s,e,tc,precios){
-  return buildTable(processCta(wCta,s,e),processNegocios(wNeg,s,e),processCheques(wChq,s,e,tc),processCanjes(wCanje,s,e,tc,precios));
-}
 function periodDates(ym){
   if(!ym)return{s:null,e:null,label:''};
   const[y,m]=ym.split('-').map(Number);
   return{s:new Date(y,m-1,1),e:new Date(y,m,0),label:new Date(y,m-1,1).toLocaleDateString('es-AR',{month:'long',year:'numeric'}).replace(/^\w/,c=>c.toUpperCase())};
 }
+
+const MAX_MESES_ADELANTE=24;   // tope de seguridad ante fechas basura muy futuras
+
 function processFiles(files,params){
-  const{tc,precios,fechaTablero,mes2,mes3,mes4}=params;
-  const pr={...precios};
-  const ref=fechaTablero?new Date(fechaTablero):new Date();
-  const agEnd=new Date(ref.getFullYear(),ref.getMonth()+1,0);
-  const today=new Date();today.setHours(0,0,0,0);
-  const p2=periodDates(mes2),p3=periodDates(mes3),p4=periodDates(mes4);
+  const{tc,precios,fechaTablero}=params;
+  const hoy=new Date();hoy.setHours(0,0,0,0);
+  const ref=parseISODate(fechaTablero)||hoy;
   return Promise.all([loadWB(files.ctaCte),loadWB(files.cheques),loadWB(files.negocios),loadWB(files.canjes)])
     .then(([wCta,wChq,wNeg,wCanje])=>{
-      const dv=calcDiasVencidos(wCta,today);
-      return{
-        rowsAgosto:mkPeriodRows(wCta,wChq,wNeg,wCanje,null,agEnd,tc,pr),
-        rows2:mes2?mkPeriodRows(wCta,wChq,wNeg,wCanje,p2.s,p2.e,tc,pr):[],
-        rows3:mes3?mkPeriodRows(wCta,wChq,wNeg,wCanje,p3.s,p3.e,tc,pr):[],
-        rows4:mes4?mkPeriodRows(wCta,wChq,wNeg,wCanje,p4.s,p4.e,tc,pr):[],
-        label2:p2.label,label3:p3.label,label4:p4.label,
-        diasVencidos:dv,
-      };
+      const recCta=parseCta(wCta),recNeg=parseNegocios(wNeg),
+            recChq=parseCheques(wChq,tc),recCanje=parseCanjes(wCanje,tc,precios);
+
+      const conDeuda=new Set();
+      recCta.forEach(r=>{if(Math.abs(r._m)>=0.01)conDeuda.add(r._c)});
+      recNeg.forEach(r=>{if(Math.abs(r._m)>=0.01)conDeuda.add(r._c)});
+
+      // Meses con movimientos, detectados sobre las 4 fuentes
+      const meses=new Set();
+      [recCta,recNeg,recChq,recCanje].forEach(a=>a.forEach(r=>{if(r._d&&Math.abs(r._m)>=0.01)meses.add(monthKey(r._d))}));
+      const curKey=monthKey(ref);
+      const nextKey=monthKey(new Date(ref.getFullYear(),ref.getMonth()+1,1));
+      const limite=monthKey(new Date(ref.getFullYear(),ref.getMonth()+MAX_MESES_ADELANTE,1));
+      const posteriores=[...meses].filter(k=>k>curKey&&k<=limite).sort();
+      const keys=[...new Set([curKey,nextKey,...posteriores])].sort();
+
+      const periods=[{key:'vencido',label:'Vencido a la fecha',s:null,e:ref}];
+      keys.forEach(k=>{const p=periodDates(k);periods.push({key:k,label:p.label,s:p.s,e:p.e});});
+      periods.forEach(p=>{
+        p.rows=buildTable(agg(recCta,p.s,p.e),agg(recNeg,p.s,p.e),agg(recChq,p.s,p.e),agg(recCanje,p.s,p.e),conDeuda);
+      });
+
+      return{periods,diasVencidos:calcDiasVencidos(recCta,hoy),fechaRef:ref};
     });
 }
+
 function sumCol(rows,key){return rows.reduce((s,r)=>s+(r[key]||0),0);}
 function getSemaforo(dias){
   if(dias===undefined||dias===null||dias<0)return{color:'verde',label:'🟢 Al día'};
@@ -484,9 +502,15 @@ function getSemaforo(dias){
   return{color:'verde',label:'🟢 Al día'};
 }
 
-function exportToExcel(rowsA,rows2,rows3,rows4,result,params,obs){
+function exportToExcel(periods,params,obs){
   const wb=XLSX.utils.book_new();
   const hdr=['CLIENTE','CTA CTE USD','PTE FACTURAR USD','DEUDA TOTAL USD','CHEQUES USD','CANJES USD','TOTAL GENERAL USD','OBSERVACIONES'];
+  const usados=new Set();
+  function safeName(label){
+    let n=(label||'Período').replace(/[\\\/\?\*\[\]:]/g,'-').substring(0,31);
+    let i=2,base=n;while(usados.has(n)){n=(base.substring(0,28)+'('+i+')');i++;}
+    usados.add(n);return n;
+  }
   function mkSheet(rows,label){
     const data=[hdr];
     rows.forEach(r=>data.push([r.cliente,r.cta||null,r.neg||null,r.deuda||null,r.chq||null,r.canje||null,r.total||null,obs[r.cliente]||'']));
@@ -494,17 +518,12 @@ function exportToExcel(rowsA,rows2,rows3,rows4,result,params,obs){
     data.push(['TOTAL',tot('cta'),tot('neg'),tot('deuda'),tot('chq'),tot('canje'),tot('total'),'']);
     const ws=XLSX.utils.aoa_to_sheet(data);
     ws['!cols']=[{wch:45},{wch:14},{wch:16},{wch:14},{wch:14},{wch:14},{wch:14},{wch:28}];
-    XLSX.utils.book_append_sheet(wb,ws,label);
+    XLSX.utils.book_append_sheet(wb,ws,safeName(label));
   }
-  const ref=params.fechaTablero?new Date(params.fechaTablero):new Date();
-  const lbl1='Vencido y '+ref.toLocaleDateString('es-AR',{month:'long',year:'numeric'}).replace(/^\w/,c=>c.toUpperCase());
-  mkSheet(rowsA,lbl1.substring(0,31));
-  if(rows2&&rows2.length)mkSheet(rows2,(result.label2||params.mes2||'Período 2').substring(0,31));
-  if(rows3&&rows3.length)mkSheet(rows3,(result.label3||params.mes3||'Período 3').substring(0,31));
-  if(rows4&&rows4.length)mkSheet(rows4,(result.label4||params.mes4||'Período 4').substring(0,31));
-  const pd=[['Parámetro','Valor'],['Fecha',params.fechaTablero],['TC',params.tc],
-    ['Soja USD/tn',params.precios.sojaUSD],['Maíz USD/tn',params.precios.maizUSD],['Trigo USD/tn',params.precios.trigoUSD]];
-  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(pd),'Parámetros');
+  periods.forEach(p=>{if(p.rows&&p.rows.length)mkSheet(p.rows,p.label);});
+  const pd=[['Par\u00e1metro','Valor'],['Fecha del tablero',params.fechaTablero],['TC',params.tc],
+    ['Soja USD/tn',params.precios.sojaUSD],['Ma\u00edz USD/tn',params.precios.maizUSD],['Trigo USD/tn',params.precios.trigoUSD]];
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(pd),'Par\u00e1metros');
   const out=XLSX.write(wb,{bookType:'xlsx',type:'array'});
   const url=URL.createObjectURL(new Blob([out],{type:'application/octet-stream'}));
   Object.assign(document.createElement('a'),{href:url,download:`Tablero_Deuda_${(params.fechaTablero||'').replace(/\//g,'-')}.xlsx`}).click();
@@ -546,12 +565,6 @@ function ParamsPanel({params,onChange}){
     h('div',{className:'params-grid'},
       h('label',{className:'param-group'},h('span',{},'Fecha del tablero'),
         h('input',{type:'date',value:params.fechaTablero,onChange:e=>onChange({...params,fechaTablero:e.target.value})})),
-      ...['mes2','mes3','mes4'].map((k,i)=>h('label',{className:'param-group',key:k},
-        h('span',{},['2° Período','3° Período','4° Período'][i]),
-        h('input',{type:'month',value:params[k]||'',
-          style:{padding:'7px 9px',border:'1px solid var(--gray-200)',borderRadius:'var(--radius)',fontFamily:'var(--font-mono)',fontSize:'.85rem',color:'var(--navy)',background:'var(--gray-50)',width:'100%'},
-          onChange:e=>onChange({...params,[k]:e.target.value})})
-      )),
       h('label',{className:'param-group'},h('span',{},'TC Dólar Divisa Vendedor Nación'),
         h('div',{className:'input-prefix'},h('span',{className:'pfx'},'$'),
           h('input',{type:'number',step:'0.01',value:params.tc,onChange:e=>onChange({...params,tc:parseFloat(e.target.value)||0})}))),
@@ -565,7 +578,8 @@ function ParamsPanel({params,onChange}){
       h('span',{},'Soja: USD '+(p.sojaUSD||0)+'/tn'),
       h('span',{},'Maíz: USD '+(p.maizUSD||0)+'/tn'),
       h('span',{},'Trigo: USD '+(p.trigoUSD||0)+'/tn'),
-      h('span',{style:{color:'var(--amber)',background:'var(--amber-light)'}},'⚠ Actualizar precios con pizarra CAC/BCR del día')
+      h('span',{style:{color:'var(--amber)',background:'var(--amber-light)'}},'⚠ Actualizar precios con pizarra CAC/BCR del día'),
+      h('span',{},'🗂 Las pestañas de meses se generan solas según los movimientos detectados')
     )
   );
 }
@@ -884,14 +898,13 @@ function App(){
   const[params,setParams]=useState({
     fechaTablero:'2026-08-07',tc:1498.50,
     // Pizarra BCR convertida a USD/tn (referencia 06/08/2026 — actualizar cada vez que se use)
-    precios:{sojaUSD:340.83,maizUSD:186.98,trigoUSD:214.96},
-    mes2:'2026-09',mes3:'2026-10',mes4:'2026-11'
+    precios:{sojaUSD:340.83,maizUSD:186.98,trigoUSD:214.96}
   });
   const[result,setResult]=useState(null);
   const[loading,setLoading]=useState(false);
   const[error,setError]=useState(null);
   const[navTab,setNavTab]=useState('tablero');
-  const[tab,setTab]=useState('agosto');
+  const[tab,setTab]=useState('vencido');
   const[search,setSearch]=useState('');
   const[showParams,setShowParams]=useState(true);
   const[filter,setFilter]=useState('todos');
@@ -912,30 +925,18 @@ function App(){
     setLoading(true);setError(null);
     try{
       const data=await processFiles(files,params);
-      setResult(data);setShowParams(false);setTab('agosto');setSearch('');setFilter('todos');setMinDeuda('');
+      setResult(data);setShowParams(false);setTab('vencido');setSearch('');setFilter('todos');setMinDeuda('');
     }catch(e){setError('Error procesando los archivos: '+e.message);}
     finally{setLoading(false);}
   },[files,params,allLoaded]);
 
   const handleSort=key=>{if(sortKey===key)setSortDir(d=>d==='asc'?'desc':'asc');else{setSortKey(key);setSortDir('desc');}};
 
-  const ref=params.fechaTablero?new Date(params.fechaTablero):new Date();
-  const mes1Label='Vencido y '+ref.toLocaleDateString('es-AR',{month:'long',year:'numeric'}).replace(/^\w/,c=>c.toUpperCase());
-
-  const currentRows=result?(
-    tab==='agosto'?result.rowsAgosto:
-    tab==='p2'?result.rows2||[]:
-    tab==='p3'?result.rows3||[]:
-    tab==='p4'?result.rows4||[]:[]
-  ):[];
-
-  // Pestañas: Período 1 (vencido + mes del tablero) + los 3 períodos configurados en parámetros
-  const periodTabs=result?[
-    {key:'agosto',label:mes1Label,count:result.rowsAgosto.length},
-    ...(params.mes2?[{key:'p2',label:result.label2||params.mes2,count:(result.rows2||[]).length}]:[]),
-    ...(params.mes3?[{key:'p3',label:result.label3||params.mes3,count:(result.rows3||[]).length}]:[]),
-    ...(params.mes4?[{key:'p4',label:result.label4||params.mes4,count:(result.rows4||[]).length}]:[]),
-  ]:[];
+  // Pestañas dinámicas: "Vencido a la fecha" + mes corriente + mes siguiente + meses posteriores con movimientos
+  const periods=result?result.periods:[];
+  const activePeriod=periods.find(p=>p.key===tab)||periods[0]||{label:'',rows:[]};
+  const currentRows=activePeriod.rows||[];
+  const rowsVencido=(periods[0]||{rows:[]}).rows||[];
 
   return h('div',{className:'app'},
     h('header',{className:'app-header'},
@@ -951,7 +952,7 @@ function App(){
         result&&h('div',{className:'header-actions'},
           h('button',{className:'btn btn-ghost',onClick:()=>{setResult(null);setShowParams(true);setNavTab('tablero');}},'← Nueva consulta'),
           h('button',{className:'btn btn-ghost',onClick:()=>window.print()},'🖨 PDF'),
-          h('button',{className:'btn btn-primary',onClick:()=>exportToExcel(result.rowsAgosto,result.rows2||[],result.rows3||[],result.rows4||[],result,params,obs)},'↓ Exportar Excel'),
+          h('button',{className:'btn btn-primary',onClick:()=>exportToExcel(result.periods,params,obs)},'↓ Exportar Excel'),
         )
       )
     ),
@@ -979,17 +980,17 @@ function App(){
 
       result&&navTab==='tablero'&&h('section',{className:'results-section'},
         h('div',{className:'summary-strip'},
-          h(SummaryCard,{label:'Deuda total ('+mes1Label+')',value:sumCol(result.rowsAgosto,'deuda'),sub:result.rowsAgosto.length+' clientes'}),
-          h(SummaryCard,{label:'Cheques en cartera',value:Math.abs(sumCol(result.rowsAgosto,'chq')),sub:'Solo tipo T · convertidos a USD',accent:'green'}),
-          h(SummaryCard,{label:'Contratos de canje',value:Math.abs(sumCol(result.rowsAgosto,'canje')),sub:'Con IVA 10,5%',accent:'green'}),
-          h(SummaryCard,{label:'TOTAL GENERAL',value:sumCol(result.rowsAgosto,'total'),sub:'Deuda neta a cobrar',accent:'navy'}),
+          h(SummaryCard,{label:'Deuda total · '+activePeriod.label,value:sumCol(currentRows,'deuda'),sub:currentRows.length+' clientes'}),
+          h(SummaryCard,{label:'Cheques en cartera',value:Math.abs(sumCol(currentRows,'chq')),sub:'Solo tipo T · por fecha de pago',accent:'green'}),
+          h(SummaryCard,{label:'Contratos de canje',value:Math.abs(sumCol(currentRows,'canje')),sub:'Con IVA 10,5%',accent:'green'}),
+          h(SummaryCard,{label:'TOTAL GENERAL',value:sumCol(currentRows,'total'),sub:'Deuda neta a cobrar',accent:'navy'}),
         ),
         h('div',{className:'toolbar'},
           h('div',{className:'toolbar-left'},
             h('div',{className:'tabs'},
-              periodTabs.map(t=>h('button',{key:t.key,className:'tab'+(tab===t.key?' active':''),
-                onClick:()=>{setTab(t.key);setSearch('');}},
-                t.label,h('span',{className:'tab-badge'},t.count)))
+              periods.map(p=>h('button',{key:p.key,className:'tab'+(tab===p.key?' active':''),
+                onClick:()=>{setTab(p.key);setSearch('');}},
+                p.label,h('span',{className:'tab-badge'},(p.rows||[]).length)))
             ),
           ),
           h('div',{className:'toolbar-right'},
@@ -1025,12 +1026,12 @@ function App(){
         }),
         h('div',{className:'legend-bar'},
           h('span',{className:'leg red'},'Rojo = deuda a cobrar'),h('span',{className:'leg green'},'Verde = saldo a favor'),
-          h('span',{className:'leg'},'Clic en cliente para ver detalle · Cheques solo tipo "T" · IVA Fert 10,5% · Agroquím 21% · Canjes 10,5%'),
+          h('span',{className:'leg'},'Clic en cliente para ver detalle · Cheques solo tipo "T", ubicados por fecha de pago · IVA Fert 10,5% · Agroquím 21% · Canjes 10,5% · Detalle ordenado del más vencido al más reciente'),
         )
       ),
 
       result&&navTab==='seguimiento'&&h(SeguimientoView,{
-        rows:result.rowsAgosto,diasVencidos:result.diasVencidos,
+        rows:rowsVencido,diasVencidos:result.diasVencidos,
         seguimiento,onSeguimientoChange:setSeguimiento,
       }),
     ),
