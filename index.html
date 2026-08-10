@@ -216,8 +216,18 @@ tbody .col-deuda{background:rgba(224,238,255,.4)}tbody .col-total{background:rgb
 <body><div id="root"></div>
 <script>
 // ═══ STORAGE ═══
-const STORAGE_KEY='tablero_seg_v2';
-function loadStorage(){try{const d=localStorage.getItem(STORAGE_KEY);return d?JSON.parse(d):{}}catch(e){return{}}}
+const STORAGE_KEY='tablero_seguimiento_v1';
+const STORAGE_KEY_LEGACY='tablero_seg_v2';
+function loadStorage(){
+  try{
+    let d=localStorage.getItem(STORAGE_KEY);
+    if(!d){ // migración desde la clave anterior
+      const old=localStorage.getItem(STORAGE_KEY_LEGACY);
+      if(old){localStorage.setItem(STORAGE_KEY,old);d=old;}
+    }
+    return d?JSON.parse(d):{};
+  }catch(e){return{}}
+}
 function saveStorage(d){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(d))}catch(e){}}
 
 // ═══ HELPERS ═══
@@ -230,7 +240,19 @@ function parseDate(v){
 }
 function fmtDate(v){const d=parseDate(v);if(!d)return '';return d.toLocaleDateString('es-AR');}
 function inPeriod(v,s,e){const d=parseDate(v);if(!d)return false;const t=d.getTime();return t>=(s?s.getTime():-Infinity)&&t<=(e?e.getTime():Infinity);}
-function num(v){const n=parseFloat((v||'').toString().replace(',','.'));return isNaN(n)?0:n;}
+function num(v){
+  if(v===null||v===undefined||v==='')return 0;
+  if(typeof v==='number')return isFinite(v)?v:0;
+  let s=v.toString().trim().replace(/\s| /g,'');
+  if(!s)return 0;
+  const hasDot=s.includes('.'),hasComma=s.includes(',');
+  if(hasDot&&hasComma){                       // "1.234.567,89" → miles con punto
+    s=s.replace(/\./g,'').replace(',','.');
+  }else if(hasComma){                          // "1234,89" → decimal con coma
+    s=s.replace(',','.');
+  }
+  const n=parseFloat(s);return isNaN(n)?0:n;
+}
 function findCol(h,cands){for(const c of cands){const re=new RegExp(c,'i');const i=h.findIndex(x=>re.test((x||'').toString().trim()));if(i>=0)return i;}return -1;}
 function sheetToRows(wb){const ws=wb.Sheets[wb.SheetNames[0]];return XLSX.utils.sheet_to_json(ws,{header:1,defval:null});}
 function fmtUSD(v,signed=false){if(Math.abs(v)<0.005)return '—';const abs=Math.abs(v).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});return(signed&&v<0?'-':'')+'$'+abs;}
@@ -298,7 +320,8 @@ function processNegocios(wb,s,e){
     const r=rows[i];if(!r||!r[cC])continue;
     if(!inPeriod(r[cFvto],s,e))continue;
     const rubro=(r[cR]||'').toString();
-    const iva=rubro.includes('4')&&rubro.toLowerCase().includes('fert')?0.105:0.21;
+    // "4 - Fertilizante" → IVA 10,5% | "1 - Agroquimico", "99 - Otros" y demás → IVA 21%
+    const iva=/fert/i.test(rubro)?0.105:0.21;
     const imp=num(r[cI])*(1+iva);
     const c=canonical(r[cC]);
     const cod=(cCod>=0?r[cCod]:'')||'';
@@ -357,7 +380,7 @@ function processCanjes(wb,s,e,tc,precios){
   const cE=findCol(h,['Tns Entregadas','TnsEntregadas','Entregadas']);
   const cL=findCol(h,['Tns Liquidadas','TnsLiquidadas','Liquidadas']);
   const cPe=findCol(h,['Tns Pendiente','TnsPendiente','Pendiente']);
-  const cCtto=findCol(h,['Contrato','NroCtto','NumCtto','Numero']);
+  const cCtto=findCol(h,['Numero Contrato Hijo','Contrato Hijo','Numero.*Contrato','NroCtto','NumCtto','Nro.*Contrato']);
   const totals={},detail={};
   for(let i=1;i<rows.length;i++){
     const r=rows[i];if(!r||!r[cC])continue;
@@ -370,7 +393,7 @@ function processCanjes(wb,s,e,tc,precios){
       else if(/ma[íi]z/i.test(prod))pUSD=precios.maizUSD;
       else if(/trigo/i.test(prod))pUSD=precios.trigoUSD;
       else pUSD=precios.sojaUSD;
-    } else if(pUSD>10000){pUSD=pUSD/tc;}
+    } else if(pUSD>1000){pUSD=pUSD/tc;}   // > 1.000 ⇒ el precio viene en ARS, se convierte a USD
     const tn=Math.max(0,(num(r[cE])-num(r[cL]))+num(r[cPe]));
     const total=pUSD*tn*1.105;const c=canonical(r[cC]);
     totals[c]=(totals[c]||0)+total;
@@ -388,18 +411,20 @@ function calcDiasVencidos(wb,today){
   const cS=findCol(h,['SALDO_AFECTADOS_DOLARES','Saldo.*D','Saldo']);
   // Also get detail of overdue invoices per client
   const cComp=findCol(h,['Comprobante']);
-  const acc={};const accDetail={};
+  // Devuelve un objeto indexado por cliente: { [cliente]: {dias, saldoVencido, factVencidas:[...]} }
+  const out={};
   for(let i=1;i<rows.length;i++){
     const r=rows[i];if(!r||!r[cC])continue;
     const saldo=num(r[cS]);if(saldo<=0.01)continue;
     const d=parseDate(r[cF]);if(!d||d>today)continue;
     const dias=Math.floor((today-d)/(1000*60*60*24));
     const c=canonical(r[cC]);
-    acc[c]=Math.max(acc[c]||0,dias);
-    if(!accDetail[c])accDetail[c]=[];
-    accDetail[c].push({comprobante:(cComp>=0?r[cComp]:'')||'',vencimiento:r[cF],saldo,dias});
+    if(!out[c])out[c]={dias:0,saldoVencido:0,factVencidas:[]};
+    out[c].dias=Math.max(out[c].dias,dias);      // factura más antigua vencida
+    out[c].saldoVencido+=saldo;
+    out[c].factVencidas.push({comprobante:(cComp>=0?r[cComp]:'')||'',vencimiento:r[cF],saldo,dias});
   }
-  return{maxDias:acc,detail:accDetail};
+  return out;
 }
 
 function buildTable(ctaR,negR,chqR,canjeR){
@@ -458,22 +483,6 @@ function getSemaforo(dias){
   if(dias>0)return{color:'amarillo',label:'🟡 Vencida'};
   return{color:'verde',label:'🟢 Al día'};
 }
-
-// Months for tabs
-const MESES_2026=[
-  {key:'2026-01',short:'Ene'},
-  {key:'2026-02',short:'Feb'},
-  {key:'2026-03',short:'Mar'},
-  {key:'2026-04',short:'Abr'},
-  {key:'2026-05',short:'May'},
-  {key:'2026-06',short:'Jun'},
-  {key:'2026-07',short:'Jul'},
-  {key:'2026-08',short:'Ago'},
-  {key:'2026-09',short:'Sep'},
-  {key:'2026-10',short:'Oct'},
-  {key:'2026-11',short:'Nov'},
-  {key:'2026-12',short:'Dic'},
-];
 
 function exportToExcel(rowsA,rows2,rows3,rows4,result,params,obs){
   const wb=XLSX.utils.book_new();
@@ -744,7 +753,7 @@ function OverdueDetailModal({cliente,facturas,onClose}){
 // Seguimiento view
 const ESTADOS=['Pendiente contacto','Contactado','Comprometió pago','En disputa'];
 const ESTADO_CLASS={'Pendiente contacto':'estado-pendiente','Contactado':'estado-contactado','Comprometió pago':'estado-comprometido','En disputa':'estado-disputa'};
- // USD threshold for seguimiento
+const SEG_MIN_USD=1000;   // umbral mínimo de deuda para aparecer en Seguimiento de Cobranza
 
 function SeguimientoView({rows,diasVencidos,seguimiento,onSeguimientoChange}){
   const[search,setSearch]=useState('');
@@ -757,14 +766,15 @@ function SeguimientoView({rows,diasVencidos,seguimiento,onSeguimientoChange}){
 
   const today=new Date();today.setHours(0,0,0,0);
 
-  const enriched=rows.filter(r=>diasVencidos[r.cliente]).map(r=>{
+  // Umbral: solo clientes con deuda >= USD 1.000. El semáforo sale de las facturas vencidas.
+  const enriched=rows.filter(r=>r.deuda>=SEG_MIN_USD).map(r=>{
     const dv=diasVencidos[r.cliente];
     const dias=dv?dv.dias:0;
-    const sem=getSemaforo(dias);
+    const sem=getSemaforo(dv?dv.dias:-1);
     const seg=seguimiento[r.cliente]||{};
     const proxContacto=seg.proxContacto?new Date(seg.proxContacto):null;
     const proxVencida=proxContacto&&proxContacto<today;
-    return{...r,dias,sem,seg,proxContacto,proxVencida,factVencidas:dv?dv.factVencidas:[]};
+    return{...r,dias,saldoVencido:dv?dv.saldoVencido:0,sem,seg,proxContacto,proxVencida,factVencidas:dv?dv.factVencidas:[]};
   });
 
   const criticos=enriched.filter(r=>r.sem.color==='rojo').length;
@@ -780,6 +790,8 @@ function SeguimientoView({rows,diasVencidos,seguimiento,onSeguimientoChange}){
   filtered=[...filtered].sort((a,b)=>{
     if(sortKey==='cliente')return sortDir==='asc'?a.cliente.localeCompare(b.cliente):b.cliente.localeCompare(a.cliente);
     if(sortKey==='dias')return sortDir==='asc'?a.dias-b.dias:b.dias-a.dias;
+    if(sortKey==='deuda')return sortDir==='asc'?a.deuda-b.deuda:b.deuda-a.deuda;
+    if(sortKey==='saldoVencido')return sortDir==='asc'?a.saldoVencido-b.saldoVencido:b.saldoVencido-a.saldoVencido;
     if(sortKey==='total')return sortDir==='asc'?a.total-b.total:b.total-a.total;
     if(sortKey==='estado'){const va=a.seg.estado||'';const vb=b.seg.estado||'';return sortDir==='asc'?va.localeCompare(vb):vb.localeCompare(va);}
     return 0;
@@ -796,7 +808,7 @@ function SeguimientoView({rows,diasVencidos,seguimiento,onSeguimientoChange}){
       h('div',{className:'alert-card amarillo'},h('div',{className:'alert-icon'},'🟡'),
         h('div',{},h('div',{className:'alert-count'},porVencer),h('div',{className:'alert-label'},'Vencida reciente — 1 a 30 días'),h('div',{className:'alert-sub'},'Seguimiento activo'))),
       h('div',{className:'alert-card verde'},h('div',{className:'alert-icon'},'🟢'),
-        h('div',{},h('div',{className:'alert-count'},alDia),h('div',{className:'alert-label'},'Al día — sin facturas vencidas'),h('div',{className:'alert-sub'},'Deuda > USD 1.000'))),
+        h('div',{},h('div',{className:'alert-count'},alDia),h('div',{className:'alert-label'},'Al día — sin facturas vencidas'),h('div',{className:'alert-sub'},'Deuda ≥ USD '+SEG_MIN_USD.toLocaleString('es-AR')))),
     ),
     h('div',{className:'filter-bar',style:{marginBottom:'10px'}},
       h('span',{className:'filter-bar-title'},'Semáforo:'),
@@ -815,14 +827,15 @@ function SeguimientoView({rows,diasVencidos,seguimiento,onSeguimientoChange}){
       )
     ),
     h('div',{className:'params-mini-bar'},
-      h('span',{},'📊 '+filtered.length+' clientes · Deuda mín USD 1.000 · Guardado automáticamente en este navegador')),
+      h('span',{},'📊 '+filtered.length+' clientes · Deuda mín USD '+SEG_MIN_USD.toLocaleString('es-AR')+' · Guardado automáticamente en este navegador')),
     h('div',{className:'seg-table-wrap'},
       h('table',{className:'seg-table'},
         h('thead',{},h('tr',{},
           thS('cliente','Cliente',{textAlign:'left',minWidth:'210px'}),
           thS('dias','Días Vencido',{textAlign:'center'}),
           h('th',{style:{textAlign:'center'}},'Semáforo'),
-          thS('total','Deuda Total USD',{textAlign:'right'}),
+          thS('saldoVencido','Saldo Vencido USD',{textAlign:'right'}),
+          thS('deuda','Deuda Total USD',{textAlign:'right'}),
           h('th',{style:{minWidth:'155px'}},'Estado Gestión'),
           h('th',{style:{minWidth:'120px'}},'Próx. Contacto'),
           h('th',{style:{minWidth:'190px'}},'Notas de Gestión'),
@@ -841,7 +854,8 @@ function SeguimientoView({rows,diasVencidos,seguimiento,onSeguimientoChange}){
               h('span',{className:'dias-badge '+(r.dias>30?'rojo':r.dias>0?'amarillo':'verde')},r.dias>0?r.dias+' días':'—')
             ),
             h('td',{style:{textAlign:'center'}},h('span',{className:'semaforo '+r.sem.color},r.sem.label)),
-            h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)',fontWeight:700,color:r.total>0?'var(--red)':'var(--green)'}},fmtUSD(r.total)),
+            h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)',fontWeight:700,color:r.saldoVencido>0?'var(--red)':'var(--gray-400)'}},fmtUSD(r.saldoVencido)),
+            h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)',fontWeight:700,color:r.deuda>0?'var(--red)':'var(--green)'}},fmtUSD(r.deuda)),
             h('td',{},h('select',{className:'estado-select '+(ESTADO_CLASS[r.seg.estado]||''),value:r.seg.estado||'',onChange:e=>updSeg(r.cliente,'estado',e.target.value)},
               h('option',{value:''},'— Sin asignar —'),ESTADOS.map(e=>h('option',{key:e,value:e},e)))),
             h('td',{},h('input',{type:'date',className:'fecha-input'+(r.proxVencida?' fecha-vencida':''),value:r.seg.proxContacto||'',onChange:e=>updSeg(r.cliente,'proxContacto',e.target.value)})),
@@ -850,7 +864,8 @@ function SeguimientoView({rows,diasVencidos,seguimiento,onSeguimientoChange}){
         })),
         h('tfoot',{},h('tr',{},
           h('td',{colSpan:3},'TOTAL ('+filtered.length+' clientes)'),
-          h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)',fontWeight:700}},fmtUSD(filtered.reduce((s,r)=>s+r.total,0))),
+          h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)',fontWeight:700}},fmtUSD(filtered.reduce((s,r)=>s+(r.saldoVencido||0),0))),
+          h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)',fontWeight:700}},fmtUSD(filtered.reduce((s,r)=>s+(r.deuda||0),0))),
           h('td',{colSpan:3},''),
         ))
       )
@@ -868,7 +883,8 @@ function App(){
   const[files,setFiles]=useState({ctaCte:null,cheques:null,negocios:null,canjes:null});
   const[params,setParams]=useState({
     fechaTablero:'2026-08-07',tc:1498.50,
-    precios:{soja:508000,maiz:278700,trigo:320400},
+    // Pizarra BCR convertida a USD/tn (referencia 06/08/2026 — actualizar cada vez que se use)
+    precios:{sojaUSD:340.83,maizUSD:186.98,trigoUSD:214.96},
     mes2:'2026-09',mes3:'2026-10',mes4:'2026-11'
   });
   const[result,setResult]=useState(null);
@@ -913,12 +929,13 @@ function App(){
     tab==='p4'?result.rows4||[]:[]
   ):[];
 
-  // Build month rows data for tabs
-  const getMonthRows=key=>{
-    if(!result)return[];
-    if(key==='agosto')return result.rowsAgosto;
-    return[];
-  };
+  // Pestañas: Período 1 (vencido + mes del tablero) + los 3 períodos configurados en parámetros
+  const periodTabs=result?[
+    {key:'agosto',label:mes1Label,count:result.rowsAgosto.length},
+    ...(params.mes2?[{key:'p2',label:result.label2||params.mes2,count:(result.rows2||[]).length}]:[]),
+    ...(params.mes3?[{key:'p3',label:result.label3||params.mes3,count:(result.rows3||[]).length}]:[]),
+    ...(params.mes4?[{key:'p4',label:result.label4||params.mes4,count:(result.rows4||[]).length}]:[]),
+  ]:[];
 
   return h('div',{className:'app'},
     h('header',{className:'app-header'},
@@ -969,14 +986,10 @@ function App(){
         ),
         h('div',{className:'toolbar'},
           h('div',{className:'toolbar-left'},
-            // All 2026 months tabs
             h('div',{className:'tabs'},
-              h('button',{className:'tab'+(tab==='agosto'?' active':''),onClick:()=>{setTab('agosto');setSearch('');}},
-                mes1Label.replace('Vencido y ',''),h('span',{className:'tab-badge'},result.rowsAgosto.length)),
-              MESES_2026.map(m=>h('button',{key:m.key,className:'tab'+(tab===m.key?' active':''),
-                onClick:()=>{setTab(m.key);setSearch('');},style:{}},
-                m.short+' 2026',
-                              ))
+              periodTabs.map(t=>h('button',{key:t.key,className:'tab'+(tab===t.key?' active':''),
+                onClick:()=>{setTab(t.key);setSearch('');}},
+                t.label,h('span',{className:'tab-badge'},t.count)))
             ),
           ),
           h('div',{className:'toolbar-right'},
@@ -1010,10 +1023,6 @@ function App(){
           onObsChange:(c,v)=>setObs(o=>({...o,[c]:v})),
           onDetail:setDetailRow,sortKey,sortDir,onSort:handleSort
         }),
-        tab!=='agosto'&&h('div',{className:'empty-state'},
-          'Seleccioná este mes como "2° Período" en los parámetros y regenerá el tablero para ver datos de ',
-          MESES_2026.find(m=>m.key===tab)?.short||tab
-        ),
         h('div',{className:'legend-bar'},
           h('span',{className:'leg red'},'Rojo = deuda a cobrar'),h('span',{className:'leg green'},'Verde = saldo a favor'),
           h('span',{className:'leg'},'Clic en cliente para ver detalle · Cheques solo tipo "T" · IVA Fert 10,5% · Agroquím 21% · Canjes 10,5%'),
